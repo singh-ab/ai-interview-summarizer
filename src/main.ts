@@ -50,8 +50,8 @@ const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
   <main class="app">
     <header class="app__header">
-      <h1>Ultra-Light Voice Interview Summaries</h1>
-      <p class="app__subtitle">Fast STT (Web Speech API) + client-side summarization</p>
+      <h1>Ultra-Light Interview Summarizer</h1>
+      <p class="app__subtitle">Fast STT & client-side summarization</p>
     </header>
 
     <section class="controls">
@@ -88,9 +88,7 @@ app.innerHTML = `
         <div class="metrics">
           <h3>Metrics</h3>
           <ul>
-            <li>Model load: <span id="metric-model-load">–</span></li>
-            <li>STT latency: <span id="metric-stt-latency">–</span> ms</li>
-            <li>Summary latency: <span id="metric-summary-latency">–</span> ms</li>
+            <li>Model load time: <span id="metric-model-load">–</span> ms</li>
           </ul>
         </div>
       </section>
@@ -108,12 +106,6 @@ const fillersEl = document.querySelector<HTMLDivElement>("#fillers");
 let isRecording = false;
 const modelLoadMetric =
   document.querySelector<HTMLSpanElement>("#metric-model-load");
-const sttLatencyMetric = document.querySelector<HTMLSpanElement>(
-  "#metric-stt-latency",
-);
-const summaryLatencyMetric = document.querySelector<HTMLSpanElement>(
-  "#metric-summary-latency",
-);
 
 // Initialize summary worker
 const summaryWorker = new Worker(
@@ -198,10 +190,17 @@ summaryWorker.onmessage = (event: MessageEvent) => {
   }
 
   if (msg.type === "model-load") {
-    if (msg.progress < 100 && modelLoadMetric) {
-      modelLoadMetric.textContent = `${msg.progress}%`;
-    } else if (msg.progress === 100 && modelLoadMetric) {
-      modelLoadMetric.textContent = "Ready";
+    if (modelLoadMetric) {
+      if (typeof msg.durationMs === "number") {
+        modelLoadMetric.textContent = Math.max(
+          0,
+          Math.round(msg.durationMs),
+        ).toString();
+      } else if (msg.progress < 100) {
+        modelLoadMetric.textContent = `${msg.progress}%`;
+      } else if (msg.progress === 100) {
+        modelLoadMetric.textContent = "0";
+      }
     }
     if (msg.progress === 100) {
       summaryWorkerReady = true;
@@ -217,15 +216,6 @@ summaryWorker.onmessage = (event: MessageEvent) => {
   if (msg.type === "summary") {
     if (summaryEl) {
       summaryEl.textContent = msg.summary;
-    }
-    if (
-      summaryLatencyMetric &&
-      typeof msg.startMs === "number" &&
-      typeof msg.endMs === "number"
-    ) {
-      summaryLatencyMetric.textContent = Math.round(
-        msg.endMs - msg.startMs,
-      ).toString();
     }
     return;
   }
@@ -372,13 +362,6 @@ function startRecognition(): void {
     if (finalized.trim()) {
       clearInterimTranscript();
       appendFinalTranscript(finalized.trim());
-
-      if (sttLatencyMetric && currentUtteranceStartMs !== null) {
-        sttLatencyMetric.textContent = Math.max(
-          0,
-          Math.round(performance.now() - currentUtteranceStartMs),
-        ).toString();
-      }
       currentUtteranceStartMs = performance.now();
     }
   };
@@ -433,9 +416,13 @@ micToggle?.addEventListener("click", async () => {
 
       // If we already inserted a filler, wait 5-6s for the candidate to speak.
       // If they don't, ask a follow-up once and then stop until speech resumes.
-      if (awaitingResponseUntilMs !== null && speechActivityAtFillerMs !== null) {
+      if (
+        awaitingResponseUntilMs !== null &&
+        speechActivityAtFillerMs !== null
+      ) {
         if (now >= awaitingResponseUntilMs) {
-          const spokeSinceFiller = lastSpeechActivityMs > speechActivityAtFillerMs;
+          const spokeSinceFiller =
+            lastSpeechActivityMs > speechActivityAtFillerMs;
           if (!spokeSinceFiller && !isSpeakingFiller) {
             // Follow-up prompt
             summaryWorker.postMessage({
