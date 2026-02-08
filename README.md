@@ -1,4 +1,4 @@
-# Interview Assistant Demo
+# AI Interview Assistant
 
 **Overview**
 This browser based demo transcribes live speech, generates concise summaries, and offers helpful interviewer style filler prompts when there is a real pause. It runs entirely client side using the Web Speech API for transcription and Transformers.js for neural summarization.
