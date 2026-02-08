@@ -7,6 +7,7 @@ env.useBrowserCache = true;
 // true  -> use neural abstractive summarizer (Xenova/distilbart-cnn-12-6).
 // false -> use fast extractive bullet summarizer instead.
 const USE_NEURAL_SUMMARY = true;
+const MAX_INPUT_CHARS = 2000;
 
 type SummaryPipeline = any;
 
@@ -212,7 +213,12 @@ self.onmessage = async (event: MessageEvent) => {
         .replace(/\s+/g, " ")
         .trim();
 
-      const result = await summarizer(cleanedText, {
+      const trimmedText =
+        cleanedText.length > MAX_INPUT_CHARS
+          ? cleanedText.slice(-MAX_INPUT_CHARS)
+          : cleanedText;
+
+      const result = await summarizer(trimmedText, {
         max_length: 150,
         min_length: 30,
         do_sample: false,

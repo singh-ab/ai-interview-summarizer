@@ -124,12 +124,17 @@ let lastFinalTranscriptMs = 0;
 let lastInterimTranscriptMs = 0;
 let isSpeakingFiller = false;
 let lastSpeechActivityMs = 0;
+let suspendAutoRestart = false;
+let recognitionActive = false;
+let summaryInFlight = false;
 
 const FILLER_PAUSE_MS = 3500;
 const RESPONSE_WAIT_MS = 6000;
 let awaitingResponseUntilMs: number | null = null;
 let speechActivityAtFillerMs: number | null = null;
 let lockFillersUntilSpeech = false;
+const MAX_TRANSCRIPT_SENTENCES = 60;
+const SUMMARY_SENTENCES_WINDOW = 30;
 
 function appendFillerHistory(phrase: string) {
   if (!fillersEl) return;
@@ -171,12 +176,14 @@ async function speakFiller(phrase: string): Promise<void> {
   if (!phrase.trim()) return;
 
   isSpeakingFiller = true;
+  suspendAutoRestart = true;
   // Prevent the recognizer from transcribing our own TTS
   stopRecognition();
   try {
     await speakTts(phrase);
   } finally {
     isSpeakingFiller = false;
+    suspendAutoRestart = false;
     if (isRecording) startRecognition();
   }
 }
@@ -217,6 +224,7 @@ summaryWorker.onmessage = (event: MessageEvent) => {
     if (summaryEl) {
       summaryEl.textContent = msg.summary;
     }
+    summaryInFlight = false;
     return;
   }
 
@@ -233,6 +241,7 @@ summaryWorker.onmessage = (event: MessageEvent) => {
   }
 
   if (msg.type === "error") {
+    summaryInFlight = false;
     console.error("Summary worker error:", msg.error);
   }
 };
@@ -255,6 +264,9 @@ function appendFinalTranscript(text: string) {
 
   // Add to transcript buffer for summarization
   transcriptBuffer.push(text);
+  if (transcriptBuffer.length > MAX_TRANSCRIPT_SENTENCES) {
+    transcriptBuffer = transcriptBuffer.slice(-MAX_TRANSCRIPT_SENTENCES);
+  }
   sentencesSinceLastFiller++;
   lastFinalTranscriptMs = performance.now();
   lastSpeechActivityMs = lastFinalTranscriptMs;
@@ -265,9 +277,13 @@ function appendFinalTranscript(text: string) {
   // Trigger summarization every N sentences
   if (
     transcriptBuffer.length >= SUMMARY_TRIGGER_SENTENCES &&
-    summaryWorkerReady
+    summaryWorkerReady &&
+    !summaryInFlight
   ) {
-    const fullText = transcriptBuffer.join(" ");
+    const fullText = transcriptBuffer
+      .slice(-SUMMARY_SENTENCES_WINDOW)
+      .join(" ");
+    summaryInFlight = true;
     summaryWorker.postMessage({
       type: "summarize",
       text: fullText,
@@ -309,14 +325,16 @@ function stopRecognition(): void {
 
 function startRecognition(): void {
   if (!SpeechRecognitionCtor) return;
+  if (recognitionActive) return;
 
-  recognition = new SpeechRecognitionCtor();
+  recognition = recognition ?? new SpeechRecognitionCtor();
   recognition.continuous = true;
   recognition.interimResults = true;
   recognition.lang = "en-US";
 
   recognition.onstart = () => {
     currentUtteranceStartMs = performance.now();
+    recognitionActive = true;
     micStatus!.textContent = "Listening…";
     micStatus!.className = "status status--active";
   };
@@ -328,8 +346,9 @@ function startRecognition(): void {
 
   recognition.onend = () => {
     clearInterimTranscript();
+    recognitionActive = false;
     // Chrome sometimes stops automatically; keep it running while recording.
-    if (isRecording) {
+    if (isRecording && !suspendAutoRestart) {
       try {
         recognition?.start();
       } catch {
@@ -396,6 +415,7 @@ micToggle?.addEventListener("click", async () => {
     micToggle.textContent = "Stop Interview";
     transcriptBuffer = [];
     sentencesSinceLastFiller = 0;
+    summaryInFlight = false;
     const now = performance.now();
     lastFillerTime = now;
     lastFinalTranscriptMs = now;
