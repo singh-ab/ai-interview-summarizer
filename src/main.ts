@@ -127,6 +127,8 @@ let lastSpeechActivityMs = 0;
 let suspendAutoRestart = false;
 let recognitionActive = false;
 let summaryInFlight = false;
+let lastSummaryText = "";
+let lastSummarizedUpTo = 0;
 
 const FILLER_PAUSE_MS = 3500;
 const RESPONSE_WAIT_MS = 6000;
@@ -134,7 +136,6 @@ let awaitingResponseUntilMs: number | null = null;
 let speechActivityAtFillerMs: number | null = null;
 let lockFillersUntilSpeech = false;
 const MAX_TRANSCRIPT_SENTENCES = 60;
-const SUMMARY_SENTENCES_WINDOW = 30;
 
 function appendFillerHistory(phrase: string) {
   if (!fillersEl) return;
@@ -224,6 +225,7 @@ summaryWorker.onmessage = (event: MessageEvent) => {
     if (summaryEl) {
       summaryEl.textContent = msg.summary;
     }
+    lastSummaryText = msg.summary as string;
     summaryInFlight = false;
     return;
   }
@@ -280,13 +282,13 @@ function appendFinalTranscript(text: string) {
     summaryWorkerReady &&
     !summaryInFlight
   ) {
-    const fullText = transcriptBuffer
-      .slice(-SUMMARY_SENTENCES_WINDOW)
-      .join(" ");
+    const newSentences = transcriptBuffer.slice(lastSummarizedUpTo).join(" ");
+    lastSummarizedUpTo = transcriptBuffer.length;
     summaryInFlight = true;
     summaryWorker.postMessage({
       type: "summarize",
-      text: fullText,
+      previousSummary: lastSummaryText,
+      newSentences,
       startMs: performance.now(),
     });
   }
@@ -416,6 +418,8 @@ micToggle?.addEventListener("click", async () => {
     transcriptBuffer = [];
     sentencesSinceLastFiller = 0;
     summaryInFlight = false;
+    lastSummaryText = "";
+    lastSummarizedUpTo = 0;
     const now = performance.now();
     lastFillerTime = now;
     lastFinalTranscriptMs = now;
@@ -491,9 +495,13 @@ micToggle?.addEventListener("click", async () => {
 
     // Final summarization on stop if we have content
     if (transcriptBuffer.length > 0 && summaryWorkerReady) {
+      const remainingSentences = transcriptBuffer
+        .slice(lastSummarizedUpTo)
+        .join(" ");
       summaryWorker.postMessage({
         type: "summarize",
-        text: transcriptBuffer.join(" "),
+        previousSummary: lastSummaryText,
+        newSentences: remainingSentences || transcriptBuffer.join(" "),
         startMs: performance.now(),
       });
     }

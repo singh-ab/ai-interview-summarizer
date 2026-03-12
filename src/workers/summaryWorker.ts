@@ -173,7 +173,12 @@ self.onmessage = async (event: MessageEvent) => {
 
   if (msg.type === "summarize") {
     try {
-      const text = msg.text as string;
+      const previousSummary = String(msg.previousSummary ?? "").trim();
+      const newSentences = String(msg.newSentences ?? msg.text ?? "").trim();
+      const text =
+        previousSummary && newSentences
+          ? `${previousSummary} ${newSentences}`
+          : newSentences || previousSummary;
       if (!text || text.trim().length < 50) {
         // Skip very short inputs
         self.postMessage({
